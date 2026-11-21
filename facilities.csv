@@ -1,0 +1,6 @@
+facility_id,facility_name,area,primary_sport,bookable_units,operating_hours_per_day,hourly_rate
+F01,Central Sports Complex,Salt Lake,Football,2,14,900
+F02,City Badminton Arena,New Town,Badminton,8,15,350
+F03,Riverside Tennis Centre,Rajarhat,Tennis,4,13,500
+F04,Community Basketball Court,Ballygunge,Basketball,2,12,250
+F05,Indoor Multi-sport Hub,Behala,Multi-sport,5,14,450
