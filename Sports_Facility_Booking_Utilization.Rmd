@@ -1,0 +1,420 @@
+---
+title: "Sports Facility Booking and Utilization Analysis"
+author: "Parag Patra | DSC3132 Business Analytics"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: readable
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 5)
+required_packages <- c("tidyverse", "lubridate", "knitr", "scales")
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) install.packages(missing_packages)
+invisible(lapply(required_packages, library, character.only = TRUE))
+```
+
+# 1. Project Overview
+
+## 1.1 Background
+
+Sports facilities such as football grounds, badminton courts, tennis centres and basketball courts have limited bookable capacity. Their managers need to understand how frequently facilities are used, when demand is highest, and why bookings are cancelled or left unused. Business analytics can convert booking records into practical operational decisions.
+
+This project investigates **Sports Facility Booking and Utilization** using two types of analytics:
+
+1. **Descriptive analytics** — explains what has happened by summarising bookings, utilization, revenue and demand patterns.
+2. **Diagnostic analytics** — investigates why utilization and booking outcomes differ across facilities, days, time slots and booking channels.
+
+The project is an academic demonstration using a reproducible synthetic dataset. The data is simulated and does not represent actual transactions of a real sports centre.
+
+## 1.2 Business Objectives
+
+- Measure booking volume, completed bookings, cancellations and no-shows.
+- Compare facility-level utilization and revenue.
+- Identify peak days and time slots.
+- Investigate factors associated with cancellations and no-shows.
+- Recommend operational actions based on the findings.
+
+## 1.3 Analytics Questions
+
+### Descriptive question
+**What are the booking, utilization and revenue patterns across sports facilities during January–March 2026?**
+
+### Diagnostic question
+**Which facility, day/time and booking-channel patterns are associated with higher cancellation and no-show rates, and what operational issues may explain lower utilization?**
+
+These are association-based diagnostic questions. The analysis can identify patterns, but it cannot prove that a particular factor causes cancellations.
+
+# 2. Dataset and Data Access Plan
+
+## 2.1 Datasets Required
+
+Two CSV datasets are supplied in the `data/` folder:
+
+- `bookings.csv`: one row per booking, including date, start time, facility, sport, duration, status, channel, customer type, fee and cancellation reason.
+- `facilities.csv`: facility details, location/area, number of bookable units, operating hours and hourly rate.
+
+## 2.2 Data Access Plan
+
+For this project, the datasets are generated programmatically with a fixed random seed and stored in the repository. This makes the project reproducible and avoids sharing personal customer information.
+
+For a real deployment, the same fields could be collected from:
+- the facility's booking-management system or booking database;
+- facility master records maintained by the operations team;
+- attendance/check-in records to validate actual usage;
+- payment records to validate revenue.
+
+Before real-world use, the data owner should approve access, remove personal identifiers, document field definitions and check data quality.
+
+## 2.3 Data Dictionary
+
+| Dataset | Field | Meaning |
+|---|---|---|
+| bookings | booking_id | Unique booking reference |
+| bookings | booking_date | Date of booking/session |
+| bookings | start_time | Scheduled starting hour |
+| bookings | facility_id | Facility identifier |
+| bookings | sport | Sport booked |
+| bookings | duration_hours | Reserved duration in hours |
+| bookings | booking_status | Completed, Cancelled or No-show |
+| bookings | booking_channel | Mobile App, Website or On-site |
+| bookings | customer_type | New or Regular customer |
+| bookings | booking_fee | Simulated booking fee |
+| bookings | cancellation_reason | Recorded reason, where applicable |
+| facilities | bookable_units | Number of courts/grounds/units |
+| facilities | operating_hours_per_day | Daily operating hours |
+| facilities | hourly_rate | Simulated hourly rate |
+
+# 3. Data Preparation
+
+```{r import-data}
+bookings <- read_csv("data/bookings.csv", show_col_types = FALSE) %>%
+  mutate(
+    booking_date = as.Date(booking_date),
+    start_hour = as.integer(substr(start_time, 1, 2)),
+    day_name = wday(booking_date, label = TRUE, abbr = FALSE),
+    day_type = if_else(wday(booking_date) %in% c(1, 7), "Weekend", "Weekday"),
+    month = floor_date(booking_date, "month"),
+    time_band = case_when(
+      start_hour < 10 ~ "Morning (before 10)",
+      start_hour < 16 ~ "Midday (10–16)",
+      TRUE ~ "Evening (16 onwards)"
+    )
+  )
+
+facilities <- read_csv("data/facilities.csv", show_col_types = FALSE)
+
+glimpse(bookings)
+glimpse(facilities)
+```
+
+## 3.1 Data Quality Checks
+
+```{r quality-checks}
+quality_summary <- tibble(
+  Check = c("Number of booking rows", "Duplicate booking IDs",
+            "Missing booking IDs", "Missing facility IDs",
+            "Invalid/non-positive durations", "Unknown facility IDs"),
+  Result = c(
+    nrow(bookings),
+    sum(duplicated(bookings$booking_id)),
+    sum(is.na(bookings$booking_id)),
+    sum(is.na(bookings$facility_id)),
+    sum(bookings$duration_hours <= 0, na.rm = TRUE),
+    sum(!bookings$facility_id %in% facilities$facility_id)
+  )
+)
+knitr::kable(quality_summary, caption = "Data quality checks")
+```
+
+# 4. Descriptive Analytics — What Is Happening?
+
+Descriptive analytics summarises historical booking activity and facility performance.
+
+## 4.1 Overall Booking Performance
+
+```{r overall-kpis}
+total_bookings <- nrow(bookings)
+completed <- sum(bookings$booking_status == "Completed")
+cancelled <- sum(bookings$booking_status == "Cancelled")
+no_show <- sum(bookings$booking_status == "No-show")
+
+kpi_table <- tibble(
+  Metric = c("Total bookings", "Completed bookings", "Cancelled bookings",
+             "No-shows", "Completion rate", "Cancellation rate", "No-show rate"),
+  Value = c(total_bookings, completed, cancelled, no_show,
+            completed / total_bookings,
+            cancelled / total_bookings,
+            no_show / total_bookings)
+) %>%
+  mutate(Value = if_else(Metric %in% c("Completion rate", "Cancellation rate", "No-show rate"),
+                         percent(Value, accuracy = 0.1), comma(Value)))
+knitr::kable(kpi_table, caption = "Overall booking KPIs")
+```
+
+## 4.2 Booking Status Distribution
+
+```{r status-chart}
+status_summary <- bookings %>%
+  count(booking_status) %>%
+  mutate(share = n / sum(n))
+
+ggplot(status_summary, aes(x = booking_status, y = n)) +
+  geom_col() +
+  geom_text(aes(label = paste0(comma(n), " (", percent(share, accuracy = 0.1), ")")),
+            vjust = -0.4) +
+  labs(title = "Booking outcomes", x = "Booking status", y = "Number of bookings") +
+  theme_minimal()
+```
+
+## 4.3 Monthly Booking Trend
+
+```{r monthly-trend}
+monthly_summary <- bookings %>%
+  count(month, name = "bookings")
+
+ggplot(monthly_summary, aes(x = month, y = bookings)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +
+  labs(title = "Monthly booking volume", x = "Month", y = "Bookings") +
+  theme_minimal()
+```
+
+## 4.4 Facility Utilization
+
+For this project, **utilization rate** is calculated as:
+
+\[
+\text{Utilization Rate} =
+\frac{\text{Completed booking hours}}
+{\text{Bookable units} \times \text{Operating hours per day} \times \text{Days in period}}
+\times 100
+\]
+
+Only completed bookings are counted as used hours. This is a simplified capacity measure; it assumes all units are available for all stated operating hours and does not account for maintenance closures.
+
+```{r utilization}
+period_days <- as.numeric(max(bookings$booking_date) - min(bookings$booking_date)) + 1
+
+facility_performance <- bookings %>%
+  group_by(facility_id) %>%
+  summarise(
+    total_bookings = n(),
+    completed_bookings = sum(booking_status == "Completed"),
+    completed_hours = sum(duration_hours[booking_status == "Completed"]),
+    cancelled = sum(booking_status == "Cancelled"),
+    no_shows = sum(booking_status == "No-show"),
+    revenue = sum(booking_fee[booking_status == "Completed"]),
+    .groups = "drop"
+  ) %>%
+  left_join(facilities, by = "facility_id") %>%
+  mutate(
+    available_hours = bookable_units * operating_hours_per_day * period_days,
+    utilization_rate = completed_hours / available_hours
+  ) %>%
+  arrange(desc(utilization_rate))
+
+knitr::kable(
+  facility_performance %>%
+    select(facility_name, total_bookings, completed_bookings, completed_hours,
+           available_hours, utilization_rate, revenue) %>%
+    mutate(utilization_rate = percent(utilization_rate, accuracy = 0.1),
+           revenue = dollar(revenue, prefix = "₹")),
+  caption = "Facility-level performance"
+)
+```
+
+```{r utilization-chart}
+ggplot(facility_performance,
+       aes(x = reorder(facility_name, utilization_rate), y = utilization_rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Completed-hour utilization by facility",
+       x = "Facility", y = "Utilization rate") +
+  theme_minimal()
+```
+
+## 4.5 Peak Booking Days and Time Bands
+
+```{r peak-patterns}
+day_summary <- bookings %>%
+  count(day_name, name = "bookings")
+
+ggplot(day_summary, aes(x = day_name, y = bookings)) +
+  geom_col() +
+  labs(title = "Bookings by day of week", x = "Day", y = "Bookings") +
+  theme_minimal()
+
+time_summary <- bookings %>%
+  count(time_band, name = "bookings")
+
+ggplot(time_summary, aes(x = time_band, y = bookings)) +
+  geom_col() +
+  labs(title = "Bookings by time band", x = "Time band", y = "Bookings") +
+  theme_minimal()
+```
+
+# 5. Diagnostic Analytics — Why Might It Be Happening?
+
+Diagnostic analytics compares outcomes across relevant groups to identify patterns that may explain performance differences.
+
+## 5.1 Cancellation and No-show Rates by Facility
+
+```{r facility-outcomes}
+facility_outcomes <- bookings %>%
+  group_by(facility_id) %>%
+  summarise(
+    bookings = n(),
+    cancellation_rate = mean(booking_status == "Cancelled"),
+    no_show_rate = mean(booking_status == "No-show"),
+    .groups = "drop"
+  ) %>%
+  left_join(facilities %>% select(facility_id, facility_name), by = "facility_id")
+
+knitr::kable(
+  facility_outcomes %>%
+    mutate(cancellation_rate = percent(cancellation_rate, accuracy = 0.1),
+           no_show_rate = percent(no_show_rate, accuracy = 0.1)) %>%
+    select(facility_name, bookings, cancellation_rate, no_show_rate),
+  caption = "Booking outcome rates by facility"
+)
+```
+
+```{r facility-outcome-chart}
+facility_outcomes_long <- facility_outcomes %>%
+  pivot_longer(c(cancellation_rate, no_show_rate),
+               names_to = "outcome", values_to = "rate")
+
+ggplot(facility_outcomes_long,
+       aes(x = reorder(facility_name, rate), y = rate, fill = outcome)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Cancellation and no-show rates by facility",
+       x = "Facility", y = "Rate", fill = "Outcome") +
+  theme_minimal()
+```
+
+## 5.2 Does Day Type Relate to Booking Outcomes?
+
+```{r daytype-diagnostic}
+daytype_summary <- bookings %>%
+  group_by(day_type) %>%
+  summarise(
+    bookings = n(),
+    cancellation_rate = mean(booking_status == "Cancelled"),
+    no_show_rate = mean(booking_status == "No-show"),
+    completion_rate = mean(booking_status == "Completed"),
+    .groups = "drop"
+  )
+
+knitr::kable(
+  daytype_summary %>%
+    mutate(across(ends_with("_rate"), ~ percent(.x, accuracy = 0.1))),
+  caption = "Booking outcomes: weekdays versus weekends"
+)
+```
+
+## 5.3 Does Booking Channel Relate to Cancellation?
+
+```{r channel-diagnostic}
+channel_summary <- bookings %>%
+  group_by(booking_channel) %>%
+  summarise(
+    bookings = n(),
+    cancellation_rate = mean(booking_status == "Cancelled"),
+    no_show_rate = mean(booking_status == "No-show"),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(cancellation_rate))
+
+knitr::kable(
+  channel_summary %>%
+    mutate(cancellation_rate = percent(cancellation_rate, accuracy = 0.1),
+           no_show_rate = percent(no_show_rate, accuracy = 0.1)),
+  caption = "Booking outcomes by booking channel"
+)
+
+ggplot(channel_summary, aes(x = reorder(booking_channel, cancellation_rate),
+                            y = cancellation_rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Cancellation rate by booking channel",
+       x = "Booking channel", y = "Cancellation rate") +
+  theme_minimal()
+```
+
+## 5.4 Cancellation Reasons
+
+```{r cancellation-reasons}
+reason_summary <- bookings %>%
+  filter(booking_status == "Cancelled") %>%
+  count(cancellation_reason, sort = TRUE)
+
+knitr::kable(reason_summary, caption = "Recorded cancellation reasons")
+
+ggplot(reason_summary, aes(x = reorder(cancellation_reason, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Most frequently recorded cancellation reasons",
+       x = "Reason", y = "Cancelled bookings") +
+  theme_minimal()
+```
+
+## 5.5 Diagnostic Interpretation
+
+Use the tables and charts above to identify:
+- whether some facilities have noticeably higher cancellation or no-show rates;
+- whether weekend and weekday outcomes differ;
+- whether booking channels show different cancellation patterns;
+- which recorded cancellation reasons appear most frequently.
+
+A higher rate in one group is a signal for further investigation, not proof of causation. Other factors such as weather, pricing, advance-booking time, event schedules and facility maintenance are not included in this simulated dataset.
+
+# 6. Key Findings and Business Recommendations
+
+Complete this section after knitting the notebook and reviewing the generated tables/charts. Use the actual output values rather than assuming a result.
+
+## 6.1 Findings to Record
+
+1. **Demand pattern:** State which day and time band have the highest booking volume.
+2. **Facility performance:** Identify the facility with the highest and lowest completed-hour utilization.
+3. **Booking outcomes:** Report the overall cancellation and no-show rates.
+4. **Diagnostic pattern:** Identify the facility/channel/day type with the highest cancellation or no-show rate.
+5. **Cancellation reasons:** State the most frequently recorded cancellation reason.
+
+## 6.2 Recommendations
+
+- Align staffing and cleaning schedules with the observed peak time bands.
+- Review low-utilization facilities for inconvenient schedules, pricing, access or promotion issues.
+- Test automated reminders before booked sessions to reduce avoidable no-shows.
+- Consider a fair cancellation window and waitlist to refill released slots.
+- Investigate high-cancellation groups before changing policy; compare results using actual operational data.
+- Track actual check-ins, maintenance closures and weather/event information in future versions.
+
+# 7. Limitations and Future Scope
+
+- The data is synthetic and illustrates an analysis workflow; findings cannot be treated as evidence about a real facility.
+- Utilization uses completed booking hours divided by theoretical capacity. Actual check-in and maintenance data would improve the measure.
+- No causal model is used. Diagnostic findings are group comparisons and should be validated with operational context.
+- Future work can add customer feedback, advance-booking lead time, weather, pricing, special events and real attendance records.
+- A future extension could build predictive models for demand forecasting, but that is outside the two analytics types selected in this notebook.
+
+# 8. Conclusion
+
+This project demonstrates how descriptive analytics can summarise sports facility demand and utilization, while diagnostic analytics can compare booking outcomes to uncover patterns associated with cancellations and no-shows. Together, these analyses provide a structured basis for improving scheduling, capacity planning and booking operations. The next step for a real organisation would be to validate the workflow using approved, anonymised booking and attendance data.
+
+# 9. Reproducibility
+
+The analysis is reproducible from the CSV files included in the repository. Open this `.Rmd` file in RStudio and select **Knit** to generate the HTML report.
+
+**Packages used:** `tidyverse`, `lubridate`, `knitr`, `scales`.

@@ -1,0 +1,9 @@
+Synthetic dataset summary
+
+booking_rows: 2857
+facility_rows: 5
+date_start: 2026-01-01
+date_end: 2026-03-31
+status_counts: {np.str_('Completed'): 2235, np.str_('Cancelled'): 453, np.str_('No-show'): 169}
+
+These are simulated academic data, not real-world observations.
